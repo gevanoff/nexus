@@ -11,9 +11,24 @@ from app.backends import check_capability, get_admission_controller
 from app.config import S
 from app.health_checker import check_backend_ready
 from app.tts_backend import ensure_tts_backend_ready, generate_tts
+from app.resources_snapshot import call_lifecycle_manager, lifecycle_manager_base_url
 
 
 router = APIRouter()
+
+
+async def _notify_tts_lifecycle(backend_class: str, event: str) -> None:
+    if not backend_class or not lifecycle_manager_base_url():
+        return
+    try:
+        await call_lifecycle_manager(
+            "POST",
+            "/v1/lifecycle/notify",
+            json_body={"backend_class": backend_class, "event": event, "route_kind": "tts"},
+            timeout=2.0,
+        )
+    except Exception:
+        return
 
 
 def _coerce_body(body: Any) -> Dict[str, Any]:
@@ -54,6 +69,7 @@ async def _handle_tts(req: Request) -> StreamingResponse | JSONResponse:
 
     admission = get_admission_controller()
     await admission.acquire(backend_class, "tts")
+    await _notify_tts_lifecycle(backend_class, "start")
     try:
         result = await generate_tts(backend_class=backend_class, body=body)
     except HTTPException:
@@ -62,6 +78,7 @@ async def _handle_tts(req: Request) -> StreamingResponse | JSONResponse:
         raise HTTPException(status_code=502, detail=f"tts backend error: {type(e).__name__}: {e}")
     finally:
         admission.release(backend_class, "tts")
+        await _notify_tts_lifecycle(backend_class, "finish")
 
     headers = _gateway_headers(result.gateway)
     if result.kind == "json":
