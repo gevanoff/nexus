@@ -51,7 +51,7 @@ Options:
 Components:
   deployment-control, gateway, cloudflared, vllm, vllm-strong, vllm-fast, vllm-embeddings, vllm-meltdown, etcd,
   images, invokeai, sdxl-turbo, lighton-ocr, personaplex, followyourcanvas, ltx-video, hunyuan-video, ace-step,
-  heartmula, lifecycle-manager, mediamtx, tts, luxtts, qwen3-tts, telegram-bot, nginx, mlx
+  heartmula, lifecycle-manager, mediamtx, tts, luxtts, qwen3-tts, chatterbox-tts, telegram-bot, nginx, mlx
 
 Special component groups:
   core             gateway + vllm + etcd
@@ -67,7 +67,7 @@ EOF
 
 is_valid_component() {
   case "$1" in
-    deployment-control|gateway|cloudflared|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    deployment-control|gateway|cloudflared|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|chatterbox-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
