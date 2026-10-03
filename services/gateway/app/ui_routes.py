@@ -3629,6 +3629,9 @@ async def ui_api_tts_voices(req: Request):
 
     backend_class = _resolve_tts_backend_class(req, None, explicit=str(req.query_params.get("backend_class") or "").strip())
     backend_key = str(backend_class or "").strip().lower()
+    if backend_key == "chatterbox_tts":
+        await check_capability(backend_class, "tts")
+        await ensure_tts_backend_ready(backend_class, reason="ui_tts_voices", route_kind="tts")
     base = _effective_tts_base_url(backend_class=backend_class)
     if not base:
         raise HTTPException(status_code=404, detail="tts backend not configured")
