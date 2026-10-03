@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import random
+import re
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -21,6 +22,7 @@ _MODEL_LOCK = threading.Lock()
 _SYNTH_LOCK = threading.Lock()
 
 _AUDIO_EXTS = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a", ".aac"}
+_VOICE_STEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def _env(name: str, default: str = "") -> str:
@@ -75,16 +77,17 @@ def _resolve_voice(voice: Optional[str]) -> Optional[str]:
     raw = (voice or "default").strip()
     if not raw or raw.lower() == "default":
         return None
-    root = _refs_dir()
-    for ext in _AUDIO_EXTS:
-        candidate = root / f"{raw}{ext}"
+    if not _VOICE_STEM_RE.fullmatch(raw) or raw in {".", ".."}:
+        raise HTTPException(status_code=400, detail="voice must be a reference-library filename stem")
+
+    root = _refs_dir().expanduser().resolve()
+    for ext in sorted(_AUDIO_EXTS):
+        candidate = (root / f"{raw}{ext}").resolve()
+        if candidate != root and root not in candidate.parents:
+            continue
         if candidate.is_file():
             return str(candidate)
-    candidate = Path(raw)
-    if candidate.is_file():
-        return str(candidate)
     raise HTTPException(status_code=400, detail=f"unknown Chatterbox voice/reference: {raw}")
-
 
 class SpeechRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -118,14 +121,6 @@ def _synthesize(req: SpeechRequest) -> tuple[bytes, int]:
     prompt = _resolve_voice(req.voice)
     model = _model()
 
-    if req.seed is not None:
-        seed = int(req.seed)
-        random.seed(seed)
-        np.random.seed(seed % (2**32 - 1))
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-
     kwargs: dict[str, Any] = {
         "temperature": req.temperature,
         "top_p": req.top_p,
@@ -140,6 +135,13 @@ def _synthesize(req: SpeechRequest) -> tuple[bytes, int]:
     # prepared, so serialize generation until the upstream model exposes a
     # request-local conditioning API.
     with _SYNTH_LOCK, torch.inference_mode():
+        if req.seed is not None:
+            seed = int(req.seed)
+            random.seed(seed)
+            np.random.seed(seed % (2**32 - 1))
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
         wav = model.generate(text, **kwargs)
 
     arr = wav.squeeze().detach().cpu().numpy().astype(np.float32, copy=False)
