@@ -129,9 +129,17 @@ def test_chatterbox_reference_resolution_is_confined_to_library() -> None:
 def test_chatterbox_seed_is_serialized_with_generation() -> None:
     source = _read("services/chatterbox-tts/app/main.py")
     lock_at = source.index("with _SYNTH_LOCK, torch.inference_mode():")
-    seed_at = source.index("random.seed(seed)", lock_at)
+    save_at = source.index("python_rng_state = random.getstate()", lock_at)
+    seed_at = source.index("random.seed(seed)", save_at)
     generate_at = source.index("generate_preserving_conditioning(", seed_at)
-    assert lock_at < seed_at < generate_at
+    restore_at = source.index("random.setstate(python_rng_state)", generate_at)
+    assert lock_at < save_at < seed_at < generate_at < restore_at
+    assert "np.random.get_state()" in source
+    assert "np.random.set_state(numpy_rng_state)" in source
+    assert "torch.random.get_rng_state()" in source
+    assert "torch.random.set_rng_state(torch_rng_state)" in source
+    assert "torch.cuda.get_rng_state_all()" in source
+    assert "torch.cuda.set_rng_state_all(cuda_rng_states)" in source
 
 
 def test_chatterbox_is_allowed_by_deployment_control() -> None:
@@ -268,3 +276,9 @@ def test_tool_calling_docs_do_not_render_literal_paragraph_escapes() -> None:
     docs = _read("docs/TOOL_CALLING.md")
     assert "falsely advertised as capable.\\n\\nAll built-in schemas" not in docs
     assert "falsely advertised as capable.\n\nAll built-in schemas" in docs
+
+
+
+def test_audio_cache_generated_names_always_have_safe_prefix() -> None:
+    source = _read("services/gateway/app/audio_cache.py")
+    assert 'name = f"a{secrets.token_urlsafe(18)' in source
