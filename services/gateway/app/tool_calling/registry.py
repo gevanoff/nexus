@@ -29,7 +29,7 @@ from app.resources_snapshot import build_resources_snapshot, call_lifecycle_mana
 from app.audio_cache import save_audio_cache
 from app.tool_calling.capabilities import tool_calling_diagnostics
 from app.tool_calling.schemas import strict_object_schema
-from app.tts_backend import generate_tts
+from app.tts_backend import ensure_tts_backend_ready, generate_tts
 
 
 ToolImplementation = Callable[..., Awaitable[dict[str, Any]]]
@@ -165,7 +165,7 @@ async def _tts_generate(args: dict[str, Any]) -> dict[str, Any]:
     if not text or len(text) > 12000:
         return {"ok": False, "error": "text must contain 1-12000 characters"}
 
-    backend = str(args.get("backend") or "chatterbox_tts").strip() or "chatterbox_tts"
+    backend = str(args.get("backend") or getattr(S, "TTS_BACKEND_CLASS", "") or "pocket_tts").strip() or "pocket_tts"
     payload: dict[str, Any] = {"input": text, "text": text, "response_format": "wav"}
     for key in (
         "voice",
@@ -184,8 +184,8 @@ async def _tts_generate(args: dict[str, Any]) -> dict[str, Any]:
     admission = get_admission_controller()
     acquired = False
     try:
-        check_backend_ready(backend, route_kind="tts")
         await check_capability(backend, "tts")
+        await ensure_tts_backend_ready(backend, reason="tool_tts", route_kind="tts")
         await admission.acquire(backend, "tts")
         acquired = True
         await _notify_tts_lifecycle(backend, "start")
