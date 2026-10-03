@@ -83,12 +83,15 @@ def _resolve_voice(voice: Optional[str]) -> Optional[str]:
         raise HTTPException(status_code=400, detail="voice must be a reference-library filename stem")
 
     root = _refs_dir().expanduser().resolve()
-    for ext in sorted(_AUDIO_EXTS):
-        candidate = (root / f"{raw}{ext}").resolve()
-        if candidate != root and root not in candidate.parents:
-            continue
-        if candidate.is_file():
-            return str(candidate)
+    if root.is_dir():
+        for path in sorted(root.iterdir()):
+            if path.stem != raw or path.suffix.lower() not in _AUDIO_EXTS:
+                continue
+            candidate = path.resolve()
+            if candidate == root or root not in candidate.parents:
+                continue
+            if candidate.is_file():
+                return str(candidate)
     raise HTTPException(status_code=400, detail=f"unknown Chatterbox voice/reference: {raw}")
 
 class SpeechRequest(BaseModel):
@@ -143,6 +146,17 @@ def _synthesize(req: SpeechRequest) -> tuple[bytes, int]:
             numpy_rng_state = np.random.get_state()
             torch_rng_state = torch.random.get_rng_state()
             cuda_rng_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+            mps_backend = getattr(torch.backends, "mps", None)
+            mps_module = getattr(torch, "mps", None)
+            mps_rng_state = (
+                mps_module.get_rng_state()
+                if mps_module is not None
+                and mps_backend is not None
+                and mps_backend.is_available()
+                and hasattr(mps_module, "get_rng_state")
+                and hasattr(mps_module, "set_rng_state")
+                else None
+            )
             try:
                 random.seed(seed)
                 np.random.seed(seed % (2**32 - 1))
@@ -161,6 +175,8 @@ def _synthesize(req: SpeechRequest) -> tuple[bytes, int]:
                 torch.random.set_rng_state(torch_rng_state)
                 if cuda_rng_states is not None:
                     torch.cuda.set_rng_state_all(cuda_rng_states)
+                if mps_rng_state is not None:
+                    mps_module.set_rng_state(mps_rng_state)
         else:
             wav = generate_preserving_conditioning(
                 model,
