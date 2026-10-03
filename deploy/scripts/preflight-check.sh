@@ -30,7 +30,7 @@ TOPOLOGY_FILE=""
 
 is_valid_component() {
   case "$1" in
-    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|chatterbox-tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -86,6 +86,7 @@ add_component_selection() {
         append_component_unique lifecycle-manager
         append_component_unique mediamtx
         append_component_unique tts
+        append_component_unique chatterbox-tts
         append_component_unique luxtts
         append_component_unique qwen3-tts
         append_component_unique telegram-bot
@@ -622,6 +623,10 @@ fi
 
 if component_selected tts; then
   check_port_required TTS_PORT 9940 "TTS service"
+fi
+
+if component_selected chatterbox-tts; then
+  check_port_required CHATTERBOX_TTS_PORT 9188 "Chatterbox TTS"
 fi
 
 if component_selected luxtts; then
