@@ -139,17 +139,35 @@ def _synthesize(req: SpeechRequest) -> tuple[bytes, int]:
     with _SYNTH_LOCK, torch.inference_mode():
         if req.seed is not None:
             seed = int(req.seed)
-            random.seed(seed)
-            np.random.seed(seed % (2**32 - 1))
-            torch.manual_seed(seed)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed_all(seed)
-        wav = generate_preserving_conditioning(
-            model,
-            text,
-            kwargs,
-            restore_after=bool(prompt),
-        )
+            python_rng_state = random.getstate()
+            numpy_rng_state = np.random.get_state()
+            torch_rng_state = torch.random.get_rng_state()
+            cuda_rng_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+            try:
+                random.seed(seed)
+                np.random.seed(seed % (2**32 - 1))
+                torch.manual_seed(seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(seed)
+                wav = generate_preserving_conditioning(
+                    model,
+                    text,
+                    kwargs,
+                    restore_after=bool(prompt),
+                )
+            finally:
+                random.setstate(python_rng_state)
+                np.random.set_state(numpy_rng_state)
+                torch.random.set_rng_state(torch_rng_state)
+                if cuda_rng_states is not None:
+                    torch.cuda.set_rng_state_all(cuda_rng_states)
+        else:
+            wav = generate_preserving_conditioning(
+                model,
+                text,
+                kwargs,
+                restore_after=bool(prompt),
+            )
 
     arr = wav.squeeze().detach().cpu().numpy().astype(np.float32, copy=False)
     arr = _time_stretch(arr, req.speed)
