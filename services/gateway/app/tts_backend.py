@@ -6,9 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Literal
 
 import httpx
+from fastapi import HTTPException
 
 from app.backends import get_registry
 from app.config import S
+from app.health_checker import check_backend_ready, get_health_checker
+from app.resources_snapshot import call_lifecycle_manager, lifecycle_manager_base_url, lifecycle_timeout
 
 
 @dataclass
@@ -36,6 +39,65 @@ def _effective_timeout_sec() -> float:
         return float(getattr(S, "TTS_TIMEOUT_SEC", 300.0) or 300.0)
     except Exception:
         return 300.0
+
+
+async def ensure_tts_backend_ready(
+    backend_class: str,
+    *,
+    reason: str,
+    route_kind: str = "tts",
+) -> Dict[str, Any] | None:
+    """Policy-aware activation plus authoritative readiness refresh for TTS."""
+    backend_class = str(backend_class or "").strip()
+    if not backend_class:
+        raise HTTPException(status_code=400, detail="backend_class required")
+
+    plan: Dict[str, Any] | None = None
+    if lifecycle_manager_base_url():
+        try:
+            plan = await call_lifecycle_manager(
+                "POST",
+                "/v1/lifecycle/ensure",
+                json_body={
+                    "backend_class": backend_class,
+                    "route_kind": route_kind,
+                    "reason": str(reason or "tts").strip() or "tts",
+                    "confirmed": False,
+                    "allow_disruptive": False,
+                },
+                timeout=max(lifecycle_timeout(), 120.0),
+            )
+        except HTTPException as exc:
+            # Older/unavailable lifecycle deployments may not support ensure.
+            # Readiness below remains the fail-closed authority.
+            if exc.status_code not in {404, 503}:
+                raise
+        if isinstance(plan, dict):
+            decision = str(plan.get("decision") or "").strip().lower()
+            if decision in {"requires_confirmation", "blocked", "observe_only"}:
+                raise HTTPException(
+                    status_code=409 if decision == "requires_confirmation" else 503,
+                    detail={
+                        "error": "tts_backend_activation_blocked",
+                        "backend_class": backend_class,
+                        "decision": decision,
+                        "lifecycle_plan": plan,
+                    },
+                )
+
+    checker = get_health_checker()
+    status = await checker.refresh_backend(backend_class)
+    if status is not None and status.raw_ready is False:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "backend_not_ready",
+                "backend_class": backend_class,
+                "message": status.raw_error or status.error or "readiness check failed",
+            },
+        )
+    check_backend_ready(backend_class, route_kind=route_kind)
+    return plan
 
 
 def _effective_generate_path() -> str:
