@@ -46,7 +46,8 @@ def _gateway_headers(meta: Dict[str, Any]) -> Dict[str, str]:
 
 async def _handle_tts(req: Request) -> StreamingResponse | JSONResponse:
     body = _coerce_body(await req.json())
-    backend_class = (getattr(S, "TTS_BACKEND_CLASS", "") or "").strip() or "pocket_tts"
+    requested_backend = str(body.pop("backend_class", None) or body.pop("backend", None) or "").strip()
+    backend_class = requested_backend or (getattr(S, "TTS_BACKEND_CLASS", "") or "").strip() or "pocket_tts"
 
     check_backend_ready(backend_class, route_kind="tts")
     await check_capability(backend_class, "tts")
