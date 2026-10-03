@@ -25,7 +25,8 @@ from app.health_checker import check_backend_ready
 from app.agent_api.tool import execute_agent_api_tool
 from app.config import S
 from app.model_aliases import get_aliases, get_aliases_state
-from app.resources_snapshot import build_resources_snapshot
+from app.resources_snapshot import build_resources_snapshot, call_lifecycle_manager, lifecycle_manager_base_url
+from app.audio_cache import save_audio_cache
 from app.tool_calling.capabilities import tool_calling_diagnostics
 from app.tool_calling.schemas import strict_object_schema
 from app.tts_backend import generate_tts
@@ -145,6 +146,20 @@ async def _diagnostics(_args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "aliases": tool_calling_diagnostics()}
 
 
+async def _notify_tts_lifecycle(backend: str, event: str) -> None:
+    if not backend or not lifecycle_manager_base_url():
+        return
+    try:
+        await call_lifecycle_manager(
+            "POST",
+            "/v1/lifecycle/notify",
+            json_body={"backend_class": backend, "event": event, "route_kind": "tts"},
+            timeout=2.0,
+        )
+    except Exception:
+        return
+
+
 async def _tts_generate(args: dict[str, Any]) -> dict[str, Any]:
     text = str(args.get("text") or "").strip()
     if not text or len(text) > 12000:
@@ -166,34 +181,32 @@ async def _tts_generate(args: dict[str, Any]) -> dict[str, Any]:
         if value is not None:
             payload[key] = value
 
-    admission = None
+    admission = get_admission_controller()
+    acquired = False
     try:
         check_backend_ready(backend, route_kind="tts")
         await check_capability(backend, "tts")
-        admission = get_admission_controller()
         await admission.acquire(backend, "tts")
+        acquired = True
+        await _notify_tts_lifecycle(backend, "start")
         result = await generate_tts(backend_class=backend, body=payload)
     except Exception as exc:
         return {"ok": False, "error": "tts_failed", "detail": f"{type(exc).__name__}: {exc}"}
     finally:
-        if admission is not None:
+        if acquired:
             admission.release(backend, "tts")
+            await _notify_tts_lifecycle(backend, "finish")
 
     if result.audio is None:
         return {"ok": False, "error": "tts_returned_no_audio", "backend": backend}
 
     content_type = str(result.content_type or "audio/wav")
-    suffix = ".mp3" if "mpeg" in content_type else ".wav"
-    out_dir = Path((getattr(S, "UI_AUDIO_DIR", "") or "/var/lib/gateway/data/ui_audio").strip())
     try:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        name = f"tool-tts-{int(datetime.now(timezone.utc).timestamp() * 1000)}-{os.urandom(4).hex()}{suffix}"
-        path = out_dir / name
-        path.write_bytes(result.audio)
-    except OSError as exc:
+        name, sha256, path = save_audio_cache(audio_bytes=result.audio, mime_hint=content_type)
+    except (OSError, ValueError) as exc:
         return {"ok": False, "error": "tts_artifact_write_failed", "detail": str(exc)}
 
-    relative_url = f"/ui/audio/{name}"
+    relative_url = f"/v1/audio/artifacts/{name}"
     public_base = str(getattr(S, "PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
     return {
         "ok": True,
@@ -201,10 +214,10 @@ async def _tts_generate(args: dict[str, Any]) -> dict[str, Any]:
         "voice": payload.get("voice") or "default",
         "content_type": content_type,
         "bytes": len(result.audio),
+        "sha256": sha256,
         "audio_url": f"{public_base}{relative_url}" if public_base else relative_url,
         "artifact_path": str(path),
     }
-
 
 def _plain_html_text(value: str) -> str:
     return " ".join(html.unescape(_HTML_TAG_RE.sub(" ", value or "")).split())
