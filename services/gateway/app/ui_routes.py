@@ -40,6 +40,7 @@ from app.backends import (
 )
 from app.config import S
 from app.browser_urls import browser_accessible_url
+from app.audio_cache import resolve_audio_cache_path, save_audio_cache
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
 from app.model_availability import fallback_target_for_backend, hf_model_cache_details, hf_model_cache_entries, hf_model_cache_state, model_unavailable_reason
@@ -1888,32 +1889,8 @@ def _normalize_voice_audio_for_storage(*, audio_bytes: bytes, mime_hint: str) ->
 
 
 def _save_ui_audio(*, audio_bytes: bytes, mime_hint: str) -> tuple[str, str]:
-    audio_dir = _ui_audio_dir()
-    ttl_sec = _ui_audio_ttl_sec()
-    max_bytes = _ui_audio_max_bytes()
-    _ensure_dir(audio_dir)
-    _cleanup_ui_audio(audio_dir, ttl_sec=ttl_sec)
-
-    if not isinstance(audio_bytes, (bytes, bytearray)):
-        raise ValueError("audio_bytes must be bytes")
-    if len(audio_bytes) > max_bytes:
-        raise ValueError(f"audio too large to cache ({len(audio_bytes)} bytes > {max_bytes})")
-
-    sha256 = hashlib.sha256(bytes(audio_bytes)).hexdigest()
-    mime = (mime_hint or "audio/wav").strip()
-    ext = _audio_mime_to_ext(mime)
-    name = f"{secrets.token_urlsafe(18)}.{ext}"
-    name = name.replace("-", "_")
-    if not _SAFE_FILE_RE.match(name):
-        raise ValueError("failed to generate safe filename")
-
-    tmp = os.path.join(audio_dir, f".{name}.tmp")
-    dst = os.path.join(audio_dir, name)
-    with open(tmp, "wb") as f:
-        f.write(audio_bytes)
-    os.replace(tmp, dst)
+    name, sha256, _path = save_audio_cache(audio_bytes=audio_bytes, mime_hint=mime_hint)
     return f"/ui/audio/{name}", sha256
-
 
 def _voice_library_dir() -> str:
     return (getattr(S, "VOICE_LIBRARY_DIR", "") or "/var/lib/gateway/data/voice_library").strip() or "/var/lib/gateway/data/voice_library"
@@ -3980,16 +3957,10 @@ async def ui_api_voice_library_delete(req: Request, voice_id: str):
 @router.get("/ui/audio/{name}", include_in_schema=False)
 async def ui_get_audio(req: Request, name: str):
     _require_ui_access(req)
-    # Serve cached UI audio files written by _save_ui_audio.
-    if not _SAFE_FILE_RE.match(name):
+    path = resolve_audio_cache_path(name)
+    if path is None:
         raise HTTPException(status_code=404, detail="audio not found")
-    audio_dir = _ui_audio_dir()
-    path = os.path.join(audio_dir, name)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="audio not found")
-    # Let FileResponse infer content-type from extension; fallback to octet-stream
     return FileResponse(path)
-
 
 @router.post("/ui/api/auth/login", include_in_schema=False)
 async def ui_auth_login(req: Request):
