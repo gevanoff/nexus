@@ -112,3 +112,72 @@ def test_core_toolset_exposes_provider_neutral_tts_generation() -> None:
     assert 'await check_capability(backend, "tts")' in source
     assert "nexus_tts_generate" in docs
     assert "vLLM or MLX" in docs
+
+
+
+def test_chatterbox_reference_resolution_is_confined_to_library() -> None:
+    source = _read("services/chatterbox-tts/app/main.py")
+    assert "_VOICE_STEM_RE.fullmatch(raw)" in source
+    assert "_refs_dir().expanduser().resolve()" in source
+    assert "root not in candidate.parents" in source
+    assert "candidate = Path(raw)" not in source
+
+
+def test_chatterbox_seed_is_serialized_with_generation() -> None:
+    source = _read("services/chatterbox-tts/app/main.py")
+    lock_at = source.index("with _SYNTH_LOCK, torch.inference_mode():")
+    seed_at = source.index("random.seed(seed)", lock_at)
+    generate_at = source.index("model.generate(text, **kwargs)", seed_at)
+    assert lock_at < seed_at < generate_at
+
+
+def test_chatterbox_is_allowed_by_deployment_control() -> None:
+    compose = _read("docker-compose.deployment-control.yml")
+    control = _read("services/deployment-control/app/main.py")
+    assert "chatterbox-tts" in compose
+    assert "chatterbox-tts" in control
+
+
+def test_tts_tool_balances_admission_and_lifecycle() -> None:
+    source = _read("services/gateway/app/tool_calling/registry.py")
+    assert "acquired = False" in source
+    assert 'await admission.acquire(backend, "tts")' in source
+    assert "acquired = True" in source
+    assert "if acquired:" in source
+    assert 'await _notify_tts_lifecycle(backend, "start")' in source
+    assert 'await _notify_tts_lifecycle(backend, "finish")' in source
+
+
+def test_tts_tool_uses_shared_cache_and_bearer_artifact_route() -> None:
+    registry = _read("services/gateway/app/tool_calling/registry.py")
+    audio_routes = _read("services/gateway/app/audio_routes.py")
+    cache = _read("services/gateway/app/audio_cache.py")
+    ui_routes = _read("services/gateway/app/ui_routes.py")
+    assert "save_audio_cache" in registry
+    assert 'relative_url = f"/v1/audio/artifacts/{name}"' in registry
+    assert '@router.get("/v1/audio/artifacts/{filename}")' in audio_routes
+    assert "require_bearer(req)" in audio_routes
+    assert "resolve_audio_cache_path(filename)" in audio_routes
+    assert "UI_AUDIO_MAX_BYTES" in cache
+    assert "UI_AUDIO_TTL_SEC" in cache
+    assert "save_audio_cache(audio_bytes=audio_bytes, mime_hint=mime_hint)" in ui_routes
+
+
+def test_tts_ui_refreshes_backend_controls_after_restore() -> None:
+    source = _read("services/gateway/app/static/tts.js")
+    restore_at = source.index("const serverSettings = await loadUserSettings();")
+    refresh_at = source.index("updateBackendSpecificControls();", restore_at)
+    voice_restore_at = source.index("serverSettings.tts.voice", restore_at)
+    assert restore_at < refresh_at < voice_restore_at
+
+
+def test_gateway_tool_budgets_cover_tts_synthesis() -> None:
+    config = _read("services/gateway/app/config.py")
+    compose = _read("docker-compose.gateway.yml")
+    docs = _read("docs/TOOL_CALLING.md")
+    assert "NEXUS_TOOL_TIMEOUT_SEC: float = 300.0" in config
+    assert "NEXUS_TOOL_LOOP_TIMEOUT_SEC: float = 360.0" in config
+    assert "NEXUS_TOOL_TIMEOUT_SEC=${NEXUS_TOOL_TIMEOUT_SEC:-300}" in compose
+    assert "NEXUS_TOOL_LOOP_TIMEOUT_SEC=${NEXUS_TOOL_LOOP_TIMEOUT_SEC:-360}" in compose
+    assert "NEXUS_TOOL_TIMEOUT_SEC=300" in docs
+    assert "NEXUS_TOOL_LOOP_TIMEOUT_SEC=360" in docs
