@@ -81,7 +81,7 @@ def save_audio_cache(*, audio_bytes: bytes, mime_hint: str) -> tuple[str, str, P
 
     sha256 = hashlib.sha256(payload).hexdigest()
     ext = _audio_mime_to_ext(mime_hint)
-    name = f"{secrets.token_urlsafe(18).replace('-', '_')}.{ext}"
+    name = f"a{secrets.token_urlsafe(18).replace('-', '_')}.{ext}"
     if not _SAFE_AUDIO_FILE_RE.fullmatch(name):
         raise ValueError("failed to generate safe filename")
 
