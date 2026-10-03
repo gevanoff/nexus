@@ -5987,6 +5987,7 @@ async def ui_chat_stream(req: Request):
                     await ensure_tts_backend_ready(backend_class, reason="ui_chat_tts", route_kind="tts")
                     admission = get_admission_controller()
                     await admission.acquire(backend_class, "tts")
+                    _schedule_lifecycle_notify(backend_class, "start", "tts")
                     try:
                         from app.tts_backend import generate_tts
 
@@ -6009,6 +6010,7 @@ async def ui_chat_stream(req: Request):
                         res = await generate_tts(backend_class=backend_class, body=tts_body)
                     finally:
                         admission.release(backend_class, "tts")
+                        _schedule_lifecycle_notify(backend_class, "finish", "tts")
 
                     audio_url = None
                     # If backend returned a dict containing an audio_url, use it.
