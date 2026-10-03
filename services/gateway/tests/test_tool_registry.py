@@ -1,4 +1,7 @@
+import asyncio
 import os
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, call
 
 import pytest
 
@@ -172,3 +175,100 @@ async def test_git_log_returns_structured_history(monkeypatch, tmp_path):
     assert len(result["commits"][0]["commit"]) == 40
     assert "--max-count=5" in captured["command"]
     assert captured["command"][-2:] == ["--", "README.md"]
+
+
+
+class _FakeTtsAdmission:
+    def __init__(self, *, acquire_error: BaseException | None = None) -> None:
+        self.acquire_error = acquire_error
+        self.acquire_calls: list[tuple[str, str]] = []
+        self.release_calls: list[tuple[str, str]] = []
+
+    async def acquire(self, backend: str, capability: str) -> None:
+        self.acquire_calls.append((backend, capability))
+        if self.acquire_error is not None:
+            raise self.acquire_error
+
+    def release(self, backend: str, capability: str) -> None:
+        self.release_calls.append((backend, capability))
+
+
+def _patch_tts_tool_dependencies(monkeypatch, admission: _FakeTtsAdmission, generate_tts) -> AsyncMock:
+    lifecycle = AsyncMock()
+    monkeypatch.setattr(registry, "get_admission_controller", lambda: admission)
+    monkeypatch.setattr(registry, "check_capability", AsyncMock())
+    monkeypatch.setattr(registry, "ensure_tts_backend_ready", AsyncMock())
+    monkeypatch.setattr(registry, "_notify_tts_lifecycle", lifecycle)
+    monkeypatch.setattr(registry, "generate_tts", generate_tts)
+    monkeypatch.setattr(
+        registry,
+        "save_audio_cache",
+        lambda **_kwargs: ("a_test.wav", "abc123", "/tmp/a_test.wav"),
+    )
+    return lifecycle
+
+
+@pytest.mark.asyncio
+async def test_tts_generate_releases_once_and_balances_lifecycle_on_success(monkeypatch):
+    admission = _FakeTtsAdmission()
+    generate = AsyncMock(return_value=SimpleNamespace(audio=b"wav", content_type="audio/wav"))
+    lifecycle = _patch_tts_tool_dependencies(monkeypatch, admission, generate)
+
+    result = await registry._tts_generate({"text": "hello", "backend": "chatterbox_tts"})
+
+    assert result["ok"] is True
+    assert admission.acquire_calls == [("chatterbox_tts", "tts")]
+    assert admission.release_calls == [("chatterbox_tts", "tts")]
+    assert lifecycle.await_args_list == [
+        call("chatterbox_tts", "start"),
+        call("chatterbox_tts", "finish"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tts_generate_does_not_release_or_finish_when_acquire_fails(monkeypatch):
+    admission = _FakeTtsAdmission(acquire_error=RuntimeError("capacity exhausted"))
+    generate = AsyncMock()
+    lifecycle = _patch_tts_tool_dependencies(monkeypatch, admission, generate)
+
+    result = await registry._tts_generate({"text": "hello", "backend": "chatterbox_tts"})
+
+    assert result["ok"] is False
+    assert result["error"] == "tts_failed"
+    assert admission.acquire_calls == [("chatterbox_tts", "tts")]
+    assert admission.release_calls == []
+    assert lifecycle.await_args_list == []
+    generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tts_generate_releases_and_finishes_when_synthesis_fails(monkeypatch):
+    admission = _FakeTtsAdmission()
+    generate = AsyncMock(side_effect=RuntimeError("synthesis failed"))
+    lifecycle = _patch_tts_tool_dependencies(monkeypatch, admission, generate)
+
+    result = await registry._tts_generate({"text": "hello", "backend": "chatterbox_tts"})
+
+    assert result["ok"] is False
+    assert result["error"] == "tts_failed"
+    assert admission.release_calls == [("chatterbox_tts", "tts")]
+    assert lifecycle.await_args_list == [
+        call("chatterbox_tts", "start"),
+        call("chatterbox_tts", "finish"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tts_generate_releases_and_finishes_on_cancellation(monkeypatch):
+    admission = _FakeTtsAdmission()
+    generate = AsyncMock(side_effect=asyncio.CancelledError())
+    lifecycle = _patch_tts_tool_dependencies(monkeypatch, admission, generate)
+
+    with pytest.raises(asyncio.CancelledError):
+        await registry._tts_generate({"text": "hello", "backend": "chatterbox_tts"})
+
+    assert admission.release_calls == [("chatterbox_tts", "tts")]
+    assert lifecycle.await_args_list == [
+        call("chatterbox_tts", "start"),
+        call("chatterbox_tts", "finish"),
+    ]
