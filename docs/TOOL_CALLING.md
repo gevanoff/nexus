@@ -37,7 +37,9 @@ With `stream=true`, Gateway buffers internal model/tool rounds and emits only th
 - `write_ops`: write/restart tools (definitions present but not executable until implementations are added), disabled by default
 - `shell`: shell and Python execution (definitions present but not executable until implementations are added), disabled by default
 
-`nexus_tts_generate` is provider-neutral and can target `chatterbox_tts`, `pocket_tts`, `luxtts`, or `qwen3_tts`. TTS may include model cold-start and long-form synthesis latency, so deployment defaults reserve a 300-second per-tool cap and a 360-second whole-loop cap; each individual tool definition still imposes its own tighter timeout when lower. Because it lives in `core`, every Nexus model that is qualified for Gateway tool execution (vLLM or MLX) receives the same TTS tool contract; models that have not passed native tool-calling qualification remain tool-disabled rather than being falsely advertised as capable.\n\nAll built-in schemas are strict OpenAI function schemas: object parameters, every property required, nullable optional values represented with `null`, `additionalProperties=false`, and `strict=true`.
+`nexus_tts_generate` is provider-neutral and can target `chatterbox_tts`, `pocket_tts`, `luxtts`, or `qwen3_tts`. TTS may include model cold-start and long-form synthesis latency, so deployment defaults reserve a 300-second per-tool cap and a 360-second whole-loop cap; each individual tool definition still imposes its own tighter timeout when lower. Because it lives in `core`, every Nexus model that is qualified for Gateway tool execution (vLLM or MLX) receives the same TTS tool contract; models that have not passed native tool-calling qualification remain tool-disabled rather than being falsely advertised as capable.
+
+All built-in schemas are strict OpenAI function schemas: object parameters, every property required, nullable optional values represented with `null`, `additionalProperties=false`, and `strict=true`.
 
 ## Security
 
