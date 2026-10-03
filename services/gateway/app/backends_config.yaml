@@ -180,6 +180,19 @@ backends:
       readiness: /health
     payload_policy: {}
 
+  chatterbox_tts:
+    class: chatterbox_tts
+    base_url: ${CHATTERBOX_TTS_BASE_URL}
+    description: Chatterbox Turbo 350M local voice-cloning TTS
+    supported_capabilities:
+      - tts
+    concurrency_limits:
+      tts: 1
+    health:
+      liveness: /health
+      readiness: /readyz
+    payload_policy: {}
+
   ltx_video:
     class: ltx_video
     base_url: ${LTX_VIDEO_BASE_URL}
