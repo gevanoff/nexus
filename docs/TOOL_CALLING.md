@@ -30,14 +30,14 @@ With `stream=true`, Gateway buffers internal model/tool rounds and emits only th
 
 ## Built-In Toolsets
 
-- `core`: `nexus_health`, `nexus_models_list`, `nexus_alias_resolve`, `nexus_tool_diagnostics`
+- `core`: `nexus_health`, `nexus_models_list`, `nexus_alias_resolve`, `nexus_tool_diagnostics`, `nexus_tts_generate`
 - `web`: `web_search` (bounded public web search through a fixed search endpoint)
 - `repo`: `nexus_file_list`, `nexus_file_read`, `nexus_file_stat`, `nexus_file_grep`, `nexus_git_status`, `nexus_git_diff`, `nexus_git_log`
 - `ops`: `nexus_resources_snapshot`, `nexus_docker_ps`, `nexus_docker_logs`, `nexus_service_status`, `nexus_http_request`
 - `write_ops`: write/restart tools (definitions present but not executable until implementations are added), disabled by default
 - `shell`: shell and Python execution (definitions present but not executable until implementations are added), disabled by default
 
-All built-in schemas are strict OpenAI function schemas: object parameters, every property required, nullable optional values represented with `null`, `additionalProperties=false`, and `strict=true`.
+`nexus_tts_generate` is provider-neutral and can target `chatterbox_tts`, `pocket_tts`, `luxtts`, or `qwen3_tts`. Because it lives in `core`, every Nexus model that is qualified for Gateway tool execution (vLLM or MLX) receives the same TTS tool contract; models that have not passed native tool-calling qualification remain tool-disabled rather than being falsely advertised as capable.\n\nAll built-in schemas are strict OpenAI function schemas: object parameters, every property required, nullable optional values represented with `null`, `additionalProperties=false`, and `strict=true`.
 
 ## Security
 
