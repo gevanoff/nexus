@@ -233,8 +233,8 @@ def test_tts_surfaces_share_policy_aware_activation() -> None:
     assert 'ensure_tts_backend_ready(backend_class, reason="api_tts"' in routes
     assert 'ensure_tts_backend_ready(backend_class, reason="ui_tts"' in ui
     assert 'ensure_tts_backend_ready(backend_class, reason="ui_chat_tts"' in ui
-    assert '_schedule_lifecycle_notify(backend_class, "start", "tts")' in ui
-    assert '_schedule_lifecycle_notify(backend_class, "finish", "tts")' in ui
+    assert 'await _notify_lifecycle_manager(backend_class, "start", "tts")' in ui
+    assert 'await _notify_lifecycle_manager(backend_class, "finish", "tts")' in ui
     assert 'ensure_tts_backend_ready(backend_class, reason="ui_tts_voices"' in ui
     assert 'await _notify_tts_lifecycle(backend_class, "start")' in routes
     assert 'await _notify_tts_lifecycle(backend_class, "finish")' in routes
