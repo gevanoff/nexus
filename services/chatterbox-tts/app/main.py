@@ -58,6 +58,10 @@ def _model():
     return _MODEL
 
 
+def _voice_stem_is_selectable(stem: str) -> bool:
+    return bool(stem) and stem == stem.strip() and stem not in {".", ".."} and bool(_VOICE_STEM_RE.fullmatch(stem))
+
+
 def _discover_voices() -> list[str]:
     out = ["default"]
     root = _refs_dir()
@@ -67,9 +71,11 @@ def _discover_voices() -> list[str]:
     for path in sorted(root.iterdir()):
         if not path.is_file() or path.suffix.lower() not in _AUDIO_EXTS:
             continue
-        voice = path.stem.strip()
+        voice = path.stem
+        if not _voice_stem_is_selectable(voice):
+            continue
         key = voice.lower()
-        if voice and key not in seen:
+        if key not in seen:
             seen.add(key)
             out.append(voice)
     return out
@@ -79,7 +85,7 @@ def _resolve_voice(voice: Optional[str]) -> Optional[str]:
     raw = (voice or "default").strip()
     if not raw or raw.lower() == "default":
         return None
-    if not _VOICE_STEM_RE.fullmatch(raw) or raw in {".", ".."}:
+    if not _voice_stem_is_selectable(raw):
         raise HTTPException(status_code=400, detail="voice must be a reference-library filename stem")
 
     root = _refs_dir().expanduser().resolve()
